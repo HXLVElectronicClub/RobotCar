@@ -1,5 +1,7 @@
 #define LEFT 8
 #define RIGHT 9
+#define SENSOR_LEFT A0
+#define SENSOR_RIGHT A1
 
 void setup() {
   Serial.begin(9600);
@@ -24,8 +26,8 @@ void goAndStop() {
 }
 
 void trace() {
-  int sensor1 = analogRead(A0);
-  int sensor2 = analogRead(A1);
+  int sensor1 = analogRead(SENSOR_LEFT);
+  int sensor2 = analogRead(SENSOR_RIGHT);
   
   Serial.print("Sensor1:");
   Serial.print(sensor1);
