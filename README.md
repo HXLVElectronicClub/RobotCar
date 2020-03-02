@@ -2,7 +2,7 @@
 
 This is a project to build and mod a basic robot car into a bluetooth control buggy.
 
-You can get the basic robot car from ebay:
+You can get the basic robot car from [ebay](https://www.ebay.com/sch/i.html?_from=R40&_trksid=m570.l1313&_nkw=robot+car+d2-1&_sacat=0&LH_TitleDesc=0&_osacat=0&_odkw=robot+car)
 
 ![car](https://i.ebayimg.com/thumbs/images/g/pdsAAOSwKe1dZl3B/s-l140.jpg)
 
