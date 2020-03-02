@@ -9,6 +9,7 @@ You can get the basic robot car from ebay:
 A pritable "Chassis & Shelf" design is on [Tinkercad](https://www.tinkercad.com/things/hMSplS9uQNW)
 
 <img src="https://github.com/HXLVElectronicClub/RobotCar/blob/master/Car%20Chassis%20Uno%20Holder.png" width="230"/>
+
 ## Assemble
 
 Install the holders for UNO when assembling the chassis:
