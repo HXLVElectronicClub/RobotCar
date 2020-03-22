@@ -20,6 +20,8 @@ Install the holders for UNO when assembling the chassis:
 
 ## Assemble holder for 9v battery and a breadboard
 
-## Add Sensors
+## Add IR remote
+https://youtu.be/P9SvC3rQejA
 
-## Add Bluetooth
+## Add L239D motor driver
+https://youtu.be/htDX-lw5M-A
