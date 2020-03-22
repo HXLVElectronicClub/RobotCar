@@ -1,15 +1,72 @@
 #include "Move.h"
 #include "arduino.h"
 int LEFT,RIGHT;
+int LEFTR, RIGHTR;
+int L239D_DRIVE = 0;
 
 void MotorPins(int left, int right) {
   LEFT = left;
   RIGHT = right;
   Stop();
 }
+
+void MotorPins(int left, int leftr, int right, int rightr) {
+  L239D_DRIVE=1;
+  LEFT = left;
+  LEFTR = leftr;
+  RIGHT = right;
+  RIGHTR = rightr;
+  Stop();
+}
+
+// v=1 turn forward
+// v=0 stop
+// v=-1 turn backward
+void LeftWheel(int v) {
+  if (!L239D_DRIVE) {
+    if (v==0 || v==-1) {
+      digitalWrite(LEFT, 1);
+    } else if (v==1) {
+      digitalWrite(LEFT, 0);
+    }
+  } else {
+    if (v == 0) {
+      digitalWrite(LEFT, 0);
+      digitalWrite(LEFTR,0);
+    } else if (v==1) {
+      digitalWrite(LEFT, 1);
+      digitalWrite(LEFTR,0);
+    } else if (v==-1) {
+      digitalWrite(LEFT, 0);
+      digitalWrite(LEFTR,1);
+    }
+  }
+}
+
+void RightWheel(int v) {
+  if (!L239D_DRIVE) {
+    if (v==0 || v==-1) {
+      digitalWrite(RIGHT, 1);
+    } else if (v==1) {
+      digitalWrite(RIGHT, 0);
+    }
+  } else {
+    if (v == 0) {
+      digitalWrite(RIGHT, 0);
+      digitalWrite(RIGHTR,0);
+    } else if (v==1) {
+      digitalWrite(RIGHT, 1);
+      digitalWrite(RIGHTR,0);
+    } else if (v==-1) {
+      digitalWrite(RIGHT, 0);
+      digitalWrite(RIGHTR,1);
+    }
+  }
+}
+
 void MoveForward(int t) {
-  digitalWrite(LEFT, 0);
-  digitalWrite(RIGHT,0);
+  LeftWheel(1);
+  RightWheel(1);
   if (t > 0) {
     delay(t);
     Stop();
@@ -17,29 +74,29 @@ void MoveForward(int t) {
 }
 
 void MoveBackward(int t) {
-  Stop();
-  // this is not supported yet
+  if (!L239D_DRIVE) {
+    Stop();
+  } else {
+    LeftWheel(-1);
+    RightWheel(-1);
+    if (t>0) {
+      delay(t);
+      Stop();
+    }
+  }
 }
 
 void Stop() {
-    digitalWrite(LEFT, 1);
-    digitalWrite(RIGHT, 1);
+  LeftWheel(0);
+  RightWheel(0);
 }
 
 void TurnRight(int t) {
-  digitalWrite(LEFT, 1);
-  digitalWrite(RIGHT, 0);
-  if (t > 0) {
-    delay(t);
-    Stop();
-  }
+  LeftWheel(1);
+  RightWheel(-1);
 }
 
 void TurnLeft(int t) {
-  digitalWrite(LEFT, 0);
-  digitalWrite(RIGHT, 1);
-  if (t > 0) {
-    delay(t);
-    Stop();
-  }
+  LeftWheel(-1);
+  RightWheel(1);
 }

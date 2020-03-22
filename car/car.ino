@@ -1,5 +1,16 @@
-#define LEFT 8
-#define RIGHT 9
+// comment this line out if you are not using L239D and drive the motor directly.
+#define L239D_DRIVE
+
+#ifndef L239D_DRIVE
+  #define LEFT 8
+  #define RIGHT 9
+#else
+  #define LEFT 5
+  #define LEFTR 4
+  #define RIGHT 3
+  #define RIGHTR 2
+#endif
+
 #define SENSOR_LEFT A0
 #define SENSOR_RIGHT A1
 #define IRDATA 11
@@ -17,7 +28,13 @@ void setup() {
   Serial.begin(9600);
   pinMode(LEFT, OUTPUT);
   pinMode(RIGHT, OUTPUT);
+#ifndef L239D_DRIVE
   MotorPins(LEFT,RIGHT);
+#else
+  pinMode(LEFTR, OUTPUT);
+  pinMode(RIGHTR, OUTPUT);
+  MotorPins(LEFT, LEFTR, RIGHT, RIGHTR);
+#endif
   irrecv.enableIRIn();
 }
 
@@ -53,6 +70,7 @@ void IRControl() {
         DoMove(lastmove );
      } else {
         DoMove(results.value); 
+        lastmove = results.value;
      }
      irrecv.resume(); 
   } else {
@@ -95,12 +113,11 @@ void DoMove(long value) {
         TurnLeft();
         break;
       case 0xFF38C7: // 5
-        Stop();
+        MoveBackward();
         break;
       case 0xFF7A85: // 3
       case 0xFF5AA5: // 6
         TurnRight();
         break;
     }
-  lastmove = value;
 }
