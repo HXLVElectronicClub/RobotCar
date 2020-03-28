@@ -2,6 +2,7 @@
 #include "arduino.h"
 int LEFT,RIGHT;
 int LEFTR, RIGHTR;
+int ENABLEL, ENABLER;
 int L239D_DRIVE = 0;
 
 void MotorPins(int left, int right) {
@@ -10,13 +11,21 @@ void MotorPins(int left, int right) {
   Stop();
 }
 
-void MotorPins(int left, int leftr, int right, int rightr) {
+void MotorPins(int left, int leftr, int right, int rightr, int enablel, int enabler) {
   L239D_DRIVE=1;
   LEFT = left;
   LEFTR = leftr;
   RIGHT = right;
   RIGHTR = rightr;
   Stop();
+  if (enablel!=0) {
+    ENABLEL = enablel;
+    SetLeftSpeed(255);
+  }
+  if (enabler!=0) {
+    ENABLER = enabler;
+    SetRightSpeed(230);
+  }
 }
 
 // v=1 turn forward
@@ -99,4 +108,12 @@ void TurnRight(int t) {
 void TurnLeft(int t) {
   LeftWheel(-1);
   RightWheel(1);
+}
+
+void SetLeftSpeed(int s) {
+  analogWrite(ENABLEL,s);
+}
+
+void SetRightSpeed(int s) {
+  analogWrite(ENABLER,s);
 }
