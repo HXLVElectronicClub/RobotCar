@@ -25,3 +25,7 @@ https://youtu.be/P9SvC3rQejA
 
 ## Add L239D motor driver
 https://youtu.be/htDX-lw5M-A
+
+## Add Ultrasonic Sensor (Distance sensor)
+https://youtu.be/Di8zvl0CSQ8
+
