@@ -1,5 +1,8 @@
 // comment this line out if you are not using L239D and drive the motor directly.
 #define L239D_DRIVE
+// Select IR or Bluetooth
+//#define USE_IR
+#define USE_BLUETOOTH
 
 /*-------------------------------
    Define used pins
@@ -21,29 +24,53 @@
 #define IRDATA 11
 #define ECHO_PIN 8
 #define TRIG_PIN 7
+
+#ifdef USE_BLUETOOTH
+  #define BT_TX 12
+  #define BT_RX 13
+#endif
 /*-------------------------------*/
 
 /*---------------------------------
  * include libraries
  *---------------------------------*/
-#include "IRremote.h"
+#ifdef USE_BLUETOOTH
+  #include "ArduinoBlue.h"
+  #include <SoftwareSerial.h>
+#endif
+#ifdef USE_IR
+  #include "IRremote.h"
+#endif
+
 #include "Move.h"
+//Distance sensor
 #include "SR04.h"
 
 /*---------------------------------
  * Function declaration
  *--------------------------------*/
-// Read IR sensor, and call coresponding function
+// Read IR sensor/or bluetooth control, and call coresponding function
+#ifdef USE_IR
 void IRControl();
+#endif
+#ifdef USE_BLUETOOTH
+void BTControl();
+#endif
 // Move according to IR data
-void DoMove(long);
+bool DoMove(long);
 // Auto move, avoid obstacal by distance sensor
 void AutoMove();
 
 /*---------------------------------
  * Controller/sensor instance
  *--------------------------------*/
-IRrecv irrecv(IRDATA);
+#ifdef USE_IR
+  IRrecv irrecv(IRDATA);
+#endif
+#ifdef USE_BLUETOOTH
+  SoftwareSerial softSerial(BT_TX,BT_RX);
+  ArduinoBlue phone(softSerial);
+#endif
 SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
 /*----------------------------------
  * code start
@@ -58,14 +85,23 @@ void setup() {
   pinMode(LEFTR, OUTPUT);
   pinMode(RIGHTR, OUTPUT);
   MotorPins(LEFT, LEFTR, RIGHT, RIGHTR, ENABLE_LEFT, ENABLE_RIGHT); 
+  SetSpeedRatio(1,0.9);
 #endif
+#ifdef USE_IR
   irrecv.enableIRIn();
+#endif
+#ifdef USE_BLUETOOTH
+  softSerial.begin(9600);
+#endif
 }
 
 void loop() {
-  //goAndStop();
-  //trace();
+#ifdef USE_BLUETOOTH
+  BTControl();
+#endif
+#ifdef USE_IR
   IRControl();
+#endif
 }
 
 void goAndStop() {
@@ -85,28 +121,33 @@ void trace() {
   delay(100);
 }
 
-long lastmove;
 bool automove=false;
+
+#ifdef USE_IR
+bool nocmd=true;
+long t = 0;
 void IRControl() {
   decode_results results;
   if (irrecv.decode(&results)) {
     Serial.print("IR: 0x");
     Serial.println(results.value, HEX);
-    if (results.value == 0xFF629D) { // "MODE"
-      automove = !automove;
-    } else if (results.value == 0xFFFFFFFF) {
-        DoMove(lastmove );
-     } else {
-        DoMove(results.value);
-        lastmove = results.value; 
-     }
-     irrecv.resume(); 
+    
+    if (DoMove(results.value)) {
+      t=millis();
+      nocmd = false;
+    }
+    irrecv.resume();
   } else if (automove) {
+    Serial.println("AutoMove");
     AutoMove();
-  } else {
-    Stop();
+  } else if (!nocmd) {
+    if (millis() - t > 300) {
+      Stop();
+      Serial.print("NoCmd:");
+      Serial.println(millis()-t);
+      nocmd = true;
+    }
   }
-  delay(100);
 }
 
 /*   
@@ -133,29 +174,45 @@ void IRControl() {
   case 0xFF52AD: Serial.println("9");    break;
   case 0xFFFFFFFF: Serial.println(" REPEAT");break;  
   */
-void DoMove(long value) {
+long lastmove;
+bool DoMove(long value) {
   switch(value) {
+      case 0xFFFFFFFF: // repeat
+        DoMove(lastmove);
+        break;
+      case 0xFF629D: // Mode
+        automove = !automove;
+        break;
       case 0xFF18E7: // 2
-        Serial.println("MoveFW:");
+        Serial.println("MoveFW");
         MoveForward();
+        lastmove = value;
         break;
       case 0xFF30CF: // 1
       case 0xFF10EF: // 4
         TurnLeft();
-        Serial.println("MoveLT:");
+        Serial.println("MoveLT");
+        lastmove = value;
         break;
       case 0xFF38C7: // 5
         MoveBackward();
-        Serial.println("MOVEBW:");
+        Serial.println("MOVEBW");
+        lastmove = value;
         break;
       case 0xFF7A85: // 3
       case 0xFF5AA5: // 6
-        Serial.println("MoveRT:");
+        Serial.println("MoveRT");
+        lastmove = value; 
         TurnRight();
         break;
+      default:
+        lastmove = 0;
+        return false;
     }
+    //delay(100);
+    return true;
 }
-
+#endif
 
 void AutoMove() {
   long a = sr04.Distance();
@@ -169,3 +226,63 @@ void AutoMove() {
     MoveForward();
   }
 }
+
+#ifdef USE_BLUETOOTH
+void BTControl() {
+  // THROTTLE AND STEERING CONTROL
+  // throttle values after subtracting 49:
+  //     50 = max forward throttle
+  //     0 = no throttole
+  //     -49 = max reverse throttle
+  // steering values after subtracting 49:
+  //     50 = max right
+  //     0 = straight
+  //     -49 = max left
+  int throttle = phone.getThrottle() - 49;
+  int steering = phone.getSteering() - 49;
+
+  if (throttle == 0) {
+    // If throttle is zero, don't move.
+    Stop();
+    return;
+  }
+
+  // Determine forwards or backwards.
+  if (throttle > 0) {
+    // Forward
+    MoveForward();
+  }
+  else {
+    // Backward
+    MoveBackward();
+  }
+  
+  // Map throttle to PWM range.
+  int mappedSpeed = map(abs(throttle), 0, 50, MINIMUM_MOTOR_SPEED, 255);
+  // Map steering to PWM range.
+  int reducedSpeed = map(abs(steering), 0, 50, mappedSpeed, MINIMUM_MOTOR_SPEED);
+
+  int leftMotorSpeed, rightMotorSpeed;
+  if (steering > 0) {
+    // Turn Right: reduce right motor speed
+    leftMotorSpeed = mappedSpeed;
+    rightMotorSpeed = reducedSpeed;
+  }
+  else {
+    // Turn Left: reduce left motor speed
+    leftMotorSpeed = reducedSpeed;
+    rightMotorSpeed = mappedSpeed;
+  }
+
+  SetLeftSpeed(leftMotorSpeed);
+  SetRightSpeed(rightMotorSpeed);
+
+  // Print Debug Info
+  Serial.print("throttle: "); Serial.print(throttle);
+  Serial.print("\tsteering: "); Serial.print(steering);
+  Serial.print("\tmappedSpeed: "); Serial.print(mappedSpeed);
+  Serial.print("\treducedSpeed: "); Serial.print(reducedSpeed);
+  Serial.print("\tleftMotorSpeed: "); Serial.print(leftMotorSpeed);
+  Serial.print("\trightMotorSpeed: "); Serial.println(rightMotorSpeed);
+}
+#endif
