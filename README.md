@@ -29,3 +29,4 @@ https://youtu.be/htDX-lw5M-A
 ## Add Ultrasonic Sensor (Distance sensor)
 https://youtu.be/Di8zvl0CSQ8
 
+## Add Bluetooth HM-10
