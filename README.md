@@ -31,3 +31,5 @@ https://youtu.be/Di8zvl0CSQ8
 
 ## Add Bluetooth HM-10
 https://youtu.be/HyYp1n0WzbI
+
+## git desktop trail
