@@ -4,14 +4,19 @@ int LEFT,RIGHT;
 int LEFTR, RIGHTR;
 int ENABLEL, ENABLER;
 int L239D_DRIVE = 0;
+int USE_74HC595;
+int IN,CLK,LATCH;
 float leftspeedratio = 1;
 float rightspeedratio = 1;
-bool moving = false;;
+bool moving = true;;
 bool debug_move = false;
+int LeftStatus=0,RightStatus=0;
 
 void MotorPins(int left, int right) {
   LEFT = left;
   RIGHT = right;
+  pinMode(LEFT, OUTPUT);
+  pinMode(RIGHT, OUTPUT);
   Stop();
 }
 
@@ -21,7 +26,32 @@ void MotorPins(int left, int leftr, int right, int rightr, int enablel, int enab
   LEFTR = leftr;
   RIGHT = right;
   RIGHTR = rightr;
+  pinMode(LEFT, OUTPUT);
+  pinMode(RIGHT, OUTPUT);
+  pinMode(LEFTR, OUTPUT);
+  pinMode(RIGHTR, OUTPUT);
   Stop();
+  if (enablel!=0) {
+    ENABLEL = enablel;
+    pinMode(ENABLEL, OUTPUT);
+    SetLeftSpeed(255);
+  }
+  if (enabler!=0) {
+    ENABLER = enabler;
+    pinMode(ENABLER, OUTPUT);
+    SetRightSpeed(255);
+  }
+}
+
+void MotorPins_shift(int in, int clk, int latch, int enablel, int enabler) {
+  L239D_DRIVE=1;
+  USE_74HC595=1;
+  IN = in;
+  CLK = clk;
+  LATCH = latch;
+  pinMode(IN, OUTPUT);
+  pinMode(CLK, OUTPUT);
+  pinMode(LATCH, OUTPUT);
   if (enablel!=0) {
     ENABLEL = enablel;
     SetLeftSpeed(255);
@@ -29,7 +59,7 @@ void MotorPins(int left, int leftr, int right, int rightr, int enablel, int enab
   if (enabler!=0) {
     ENABLER = enabler;
     SetRightSpeed(255);
-  }
+  }  
 }
 
 void RnWDigSig(int sig, int value) {
@@ -42,52 +72,17 @@ void RnWDigSig(int sig, int value) {
 // v=0 stop
 // v=-1 turn backward
 void LeftWheel(int v) {
-  if (debug_move) Serial.println("Left wheel motion");
-  if (!L239D_DRIVE) {
-    if (v==0 || v==-1) {
-      RnWDigSig(LEFT,1);
-    } else if (v==1) {
-      RnWDigSig(LEFT,0);
-    }
-  } else {
-    if (v == 0) {
-      RnWDigSig(LEFT,0);
-      RnWDigSig(LEFTR,0);
-    } else if (v==1) {
-      RnWDigSig(LEFT,1);
-      RnWDigSig(LEFTR,0);
-    } else if (v==-1) {
-      RnWDigSig(LEFT,0);
-      RnWDigSig(LEFTR,1);
-    }
-  }
+  LeftStatus = v;
 }
 
 void RightWheel(int v) {
-  if (debug_move) Serial.println("Right wheel motion");
-  if (!L239D_DRIVE) {
-    if (v==0 || v==-1) {
-      RnWDigSig(RIGHT,1);
-    } else if (v==1) {
-      RnWDigSig(RIGHT,0);
-    }
-  } else {
-    if (v == 0) {
-      RnWDigSig(RIGHT,0);
-      RnWDigSig(RIGHTR,0);
-    } else if (v==1) {
-      RnWDigSig(RIGHT,1);
-      RnWDigSig(RIGHTR,0);
-    } else if (v==-1) {
-      RnWDigSig(RIGHT,0);
-      RnWDigSig(RIGHTR,1);
-    }
-  }
+  RightStatus = v;
 }
 
 void MoveForward(int t) {
   LeftWheel(1);
   RightWheel(1);
+  Drive();
   moving = true;
   if (t > 0) {
     delay(t);
@@ -101,6 +96,7 @@ void MoveBackward(int t) {
   } else {
     LeftWheel(-1);
     RightWheel(-1);
+    Drive();
     moving = true;
     if (t>0) {
       delay(t);
@@ -114,6 +110,7 @@ void Stop() {
   if (moving) {
     LeftWheel(0);
     RightWheel(0);
+    Drive();
     moving = false;
   }
 }
@@ -121,12 +118,14 @@ void Stop() {
 void TurnRight(int t) {
   LeftWheel(1);
   RightWheel(-1);
+  Drive();
   moving = true;
 }
 
 void TurnLeft(int t) {
   LeftWheel(-1);
   RightWheel(1);
+  Drive();
   moving = true;
 }
 
@@ -141,4 +140,33 @@ void SetRightSpeed(int s) {
 void SetSpeedRatio(float l, float r) {
   leftspeedratio = l;
   rightspeedratio = r;
+}
+
+byte lastShift = 0;
+void Drive() {
+  if (!USE_74HC595) {
+    if (!L239D_DRIVE){
+      RnWDigSig(LEFT, (LeftStatus  == 0 || LeftStatus  == -1)?1:0);
+      RnWDigSig(RIGHT,(RightStatus == 0 || RightStatus == -1)?1:0);
+    } else {
+      RnWDigSig(LEFT , (LeftStatus  == 0 || LeftStatus  == -1)?0:1);
+      RnWDigSig(LEFTR, (LeftStatus  == 0 || LeftStatus  ==  1)?0:1);
+      RnWDigSig(RIGHT , (RightStatus  == 0 || RightStatus  == -1)?0:1);
+      RnWDigSig(RIGHTR, (RightStatus  == 0 || RightStatus  ==  1)?0:1);
+    }
+  } else {
+    byte bitsToSend = 0;
+    bitWrite(bitsToSend, 1, (LeftStatus==0||LeftStatus==-1)?0:1); // L
+    bitWrite(bitsToSend, 0, (LeftStatus==0||LeftStatus== 1)?0:1); // L_R
+    bitWrite(bitsToSend, 3, (RightStatus==0||RightStatus==-1)?0:1); // R
+    bitWrite(bitsToSend, 2, (RightStatus==0||RightStatus== 1)?0:1); // R_R
+    if (bitsToSend != lastShift) {
+      Serial.print("Shift out: 0b");Serial.println(bitsToSend,BIN);
+      digitalWrite(LATCH, LOW);
+      shiftOut(IN,CLK,MSBFIRST,bitsToSend);
+      digitalWrite(LATCH,HIGH);
+      lastShift = bitsToSend;
+      delay(10);
+    }
+  }
 }

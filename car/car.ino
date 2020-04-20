@@ -1,5 +1,8 @@
 // comment this line out if you are not using L239D and drive the motor directly.
 #define L239D_DRIVE
+// use shift register to save pins
+#define USE_74HC595
+
 // Select IR or Bluetooth
 //#define USE_IR
 #define USE_BLUETOOTH
@@ -11,12 +14,18 @@
   #define LEFT 8
   #define RIGHT 9
 #else
-  #define LEFT 5
-  #define LEFTR 4
-  #define RIGHT 3
-  #define RIGHTR 2
-  #define ENABLE_LEFT 9
-  #define ENABLE_RIGHT 6
+    #define LEFT         5
+    #define LEFTR        4
+    #define RIGHT        3
+    #define RIGHTR       2
+    #define ENABLE_LEFT  9
+    #define ENABLE_RIGHT 6
+#endif
+
+#ifdef USE_74HC595
+    #define SHIFT_IN    2
+    #define SHIFT_CLK   3
+    #define SHIFT_LATCH 4
 #endif
 
 #define SENSOR_LEFT A0
@@ -77,14 +86,14 @@ SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
  *--------------------------------*/
 void setup() {
   Serial.begin(9600);
-  pinMode(LEFT, OUTPUT);
-  pinMode(RIGHT, OUTPUT);
 #ifndef L239D_DRIVE
   MotorPins(LEFT,RIGHT);
 #else
-  pinMode(LEFTR, OUTPUT);
-  pinMode(RIGHTR, OUTPUT);
-  MotorPins(LEFT, LEFTR, RIGHT, RIGHTR, ENABLE_LEFT, ENABLE_RIGHT); 
+  #ifdef USE_74HC595
+    MotorPins_shift(SHIFT_IN,SHIFT_CLK,SHIFT_LATCH,ENABLE_LEFT,ENABLE_RIGHT);
+  #else
+    MotorPins(LEFT, LEFTR, RIGHT, RIGHTR, ENABLE_LEFT, ENABLE_RIGHT);
+  #endif 
   SetSpeedRatio(1,0.9);
 #endif
 #ifdef USE_IR
@@ -248,7 +257,7 @@ void BTControl() {
   }
 
   // Determine forwards or backwards.
-  if (throttle > 0) {
+  if (throttle > 20) {
     // Forward
     MoveForward();
   }
