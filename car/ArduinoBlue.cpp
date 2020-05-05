@@ -186,7 +186,7 @@ void ArduinoBlue::storeShortTransmission() {
 			intRead = _bluetooth.read();
 			if (intRead == TRANSMISSION_END) break;
 			pushToSignalArray(intRead);
-     Serial.print("Read From BT: 0x");Serial.println(intRead, HEX);
+			Serial.print("Read From BT: 0x");Serial.println(intRead, HEX);
 		}
 	}
 }

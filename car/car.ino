@@ -1,5 +1,8 @@
 // comment this line out if you are not using L239D and drive the motor directly.
 #define L239D_DRIVE
+// use shift register to save pins
+#define USE_74HC595
+
 // Select IR or Bluetooth
 //#define USE_IR
 #define USE_BLUETOOTH
@@ -16,12 +19,18 @@
   #define LEFT 8
   #define RIGHT 9
 #else
-  #define LEFT 5
-  #define LEFTR 4
-  #define RIGHT 3
-  #define RIGHTR 2
-  #define ENABLE_LEFT 9
-  #define ENABLE_RIGHT 6
+    #define LEFT         5
+    #define LEFTR        4
+    #define RIGHT        3
+    #define RIGHTR       2
+    #define ENABLE_LEFT  9
+    #define ENABLE_RIGHT 6
+#endif
+
+#ifdef USE_74HC595
+    #define SHIFT_IN    2
+    #define SHIFT_CLK   3
+    #define SHIFT_LATCH 4
 #endif
 
 #ifdef USE_74HC595
@@ -108,8 +117,6 @@ void TracePath();
  *--------------------------------*/
 void setup() {
   Serial.begin(115200);
-  pinMode(LEFT, OUTPUT);
-  pinMode(RIGHT, OUTPUT);
 #ifndef L239D_DRIVE
   MotorPins(LEFT,RIGHT);
 #else
@@ -334,7 +341,7 @@ void MoveCar(int throttle, int steering) {
   if (throttle < -50) throttle = -50;
   
   // Determine forwards or backwards.
-  if (throttle > 0) {
+  if (throttle > 20) {
     // Forward
     MoveForward();
   }
