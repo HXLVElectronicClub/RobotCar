@@ -3,6 +3,11 @@
 // Select IR or Bluetooth
 //#define USE_IR
 #define USE_BLUETOOTH
+// Use MPU6050 Gyroscope and Accelerometer
+#define USE_MPU6050
+// use shift register to save pins
+#define USE_74HC595
+
 // push demo
 /*-------------------------------
    Define used pins
@@ -17,6 +22,16 @@
   #define RIGHTR 2
   #define ENABLE_LEFT 9
   #define ENABLE_RIGHT 6
+#endif
+
+#ifdef USE_74HC595
+    #define SHIFT_IN    3
+    #define SHIFT_CLK   4
+    #define SHIFT_LATCH 5
+#endif
+
+#ifdef USE_MPU6050
+  #define INTERRUPT_PIN 2
 #endif
 
 #define SENSOR_LEFT A0
@@ -38,8 +53,14 @@
   #include "ArduinoBlue.h"
   #include <SoftwareSerial.h>
 #endif
+
 #ifdef USE_IR
   #include "IRremote.h"
+#endif
+#ifdef USE_MPU6050
+  #include "I2Cdev.h"
+  #include "MPU6050_6Axis_MotionApps20.h"
+  #include "Wire.h"
 #endif
 
 #include "Move.h"
@@ -50,19 +71,20 @@
  * Function declaration
  *--------------------------------*/
 // Read IR sensor/or bluetooth control, and call coresponding function
-#ifdef USE_IR
 void IRControl();
-#endif
-#ifdef USE_BLUETOOTH
+// Read Bluetooth data from phone
 void BTControl();
-#endif
 // Move according to IR data
 bool DoMove(long);
-// Auto move, avoid obstacal by distance sensor
+// Auto move, avoid obstacal by distance sensor, Need Ultrasonic distance sensor
 void AutoMove();
+// Read Displacement data from MPU6050
+void readDisplacement();
+// Trace the path drew from bluetooth, need bluetooth and MP6050 sensor
+void TracePath();
 
 /*---------------------------------
- * Controller/sensor instance
+ * Controller/sensor control code instance
  *--------------------------------*/
 #ifdef USE_IR
   IRrecv irrecv(IRDATA);
@@ -71,20 +93,31 @@ void AutoMove();
   SoftwareSerial softSerial(BT_TX,BT_RX);
   ArduinoBlue phone(softSerial);
 #endif
-SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
+  SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
+#ifdef USE_MPU6050
+  MPU6050 mpu;
+  // MPU control/status vars
+  bool dmpReady = false;  // set true if DMP init was successful
+  uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+  volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+  void dmpDataReady() {mpuInterrupt = true;}
+#endif
+
 /*----------------------------------
  * code start
  *--------------------------------*/
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode(LEFT, OUTPUT);
   pinMode(RIGHT, OUTPUT);
 #ifndef L239D_DRIVE
   MotorPins(LEFT,RIGHT);
 #else
-  pinMode(LEFTR, OUTPUT);
-  pinMode(RIGHTR, OUTPUT);
-  MotorPins(LEFT, LEFTR, RIGHT, RIGHTR, ENABLE_LEFT, ENABLE_RIGHT); 
+  #ifdef USE_74HC595
+    MotorPins_shift(SHIFT_IN,SHIFT_CLK,SHIFT_LATCH,ENABLE_LEFT,ENABLE_RIGHT);
+  #else
+    MotorPins(LEFT, LEFTR, RIGHT, RIGHTR, ENABLE_LEFT, ENABLE_RIGHT);
+  #endif 
   SetSpeedRatio(1,0.9);
 #endif
 #ifdef USE_IR
@@ -92,6 +125,50 @@ void setup() {
 #endif
 #ifdef USE_BLUETOOTH
   softSerial.begin(9600);
+#endif
+#ifdef USE_MPU6050
+  uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+  Wire.begin();
+  Wire.setClock(400000);
+  mpu.initialize();
+  pinMode(INTERRUPT_PIN, INPUT);
+  devStatus = mpu.dmpInitialize();
+  mpu.setXGyroOffset(220);
+  mpu.setYGyroOffset(76);
+  mpu.setZGyroOffset(-85);
+  mpu.setZAccelOffset(1788);
+  if (devStatus == 0) {
+    mpu.CalibrateAccel(6);
+    mpu.CalibrateGyro(6);
+    mpu.PrintActiveOffsets();
+
+    // turn on the DMP, now that it's ready
+    Serial.println(F("Enabling DMP..."));
+    mpu.setDMPEnabled(true);
+
+    // enable Arduino interrupt detection
+    Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
+    Serial.print(digitalPinToInterrupt(INTERRUPT_PIN));
+    Serial.println(F(")..."));
+    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+
+    // set our DMP Ready flag so the main loop() function knows it's okay to use it
+    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+    dmpReady = true;
+
+    uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+    // get expected DMP packet size for later comparison
+    packetSize = mpu.dmpGetFIFOPacketSize();
+  } else {
+    // ERROR!
+    // 1 = initial memory load failed
+    // 2 = DMP configuration updates failed
+    // (if it's going to break, usually the code will be 1)
+    Serial.print(F("DMP Initialization failed (code "));
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+  }
 #endif
 }
 
@@ -229,6 +306,20 @@ void AutoMove() {
 
 #ifdef USE_BLUETOOTH
 void BTControl() {
+  
+  int throttle = phone.getThrottle() - 49;
+  int steering = phone.getSteering() - 49;
+
+  if (phone.isPathAvailable()) {
+    TracePath();
+  } else if (throttle == 0) {
+    // If throttle is zero, don't move.
+    Stop();
+  } else {
+    MoveCar(throttle, steering);
+  }
+}
+
   // THROTTLE AND STEERING CONTROL
   // throttle values after subtracting 49:
   //     50 = max forward throttle
@@ -238,15 +329,10 @@ void BTControl() {
   //     50 = max right
   //     0 = straight
   //     -49 = max left
-  int throttle = phone.getThrottle() - 49;
-  int steering = phone.getSteering() - 49;
-
-  if (throttle == 0) {
-    // If throttle is zero, don't move.
-    Stop();
-    return;
-  }
-
+void MoveCar(int throttle, int steering) {
+  if (throttle > 50) throttle = 50;
+  if (throttle < -50) throttle = -50;
+  
   // Determine forwards or backwards.
   if (throttle > 0) {
     // Forward
@@ -276,7 +362,7 @@ void BTControl() {
 
   SetLeftSpeed(leftMotorSpeed);
   SetRightSpeed(rightMotorSpeed);
-
+  
   // Print Debug Info
   Serial.print("throttle: "); Serial.print(throttle);
   Serial.print("\tsteering: "); Serial.print(steering);
@@ -285,4 +371,193 @@ void BTControl() {
   Serial.print("\tleftMotorSpeed: "); Serial.print(leftMotorSpeed);
   Serial.print("\trightMotorSpeed: "); Serial.println(rightMotorSpeed);
 }
+
+#ifdef USE_MPU6050
+// Trace the path from phone
+// current implementation:
+// 1) turn to the right direction
+// 2) move forward certain time, time is calculated by distance
+void TracePath() {
+  int l    = phone.getPathLength();
+  Serial.print("Path data length:");Serial.println(l);
+  if (l>0) {
+    float *xs = phone.getPathArrayX();
+    float *ys = phone.getPathArrayY();
+
+    // the angle heading to
+    float heading;
+    float ypr[3]; // vector to store yaw/pitch/roll
+    readMPU6050(ypr);
+    heading = ypr[0];
+
+    for (int i=1; i<l; i++) {
+      // double theta_p = theta;
+      // Calculate the direction and speed
+      //Serial.print("Theta(degree):");Serial.print(theta*180/M_PI);
+      float deltax = xs[i]-xs[i-1];
+      float deltay = ys[i]-ys[i-1];
+      float mod = sqrt(deltax*deltax+deltay*deltay);
+      // float x_ = deltax * cos(theta) + deltay*sin(theta);
+      // float y_ = deltay * cos(theta) - deltax*sin(theta); 
+
+      float dir;
+      if (deltay == 0) {
+        dir = 90;
+        if (deltax > 0) {
+          dir = -90;
+        }
+      } else {
+        dir = atan(deltax/deltay)*180/M_PI;
+      }
+
+      // Start to move
+      SetLeftSpeed(255);
+      SetRightSpeed(255);
+
+      // Turn to direction according to current angle
+      if (dir-heading > 0 || dir-heading<-180) {
+        TurnRight();
+        while(dir-heading>0 || dir-heading<-180) {
+          readMPU6050(ypr);
+          heading = ypr[0];
+          // Serial.print("dir:");Serial.print(dir);
+          // Serial.print("-->");
+          // Serial.print("Heading:");Serial.println(heading);
+        };
+      } else {
+        TurnLeft();
+        while(dir-heading <=0 && dir-heading >= -180) {
+          readMPU6050(ypr);
+          heading = ypr[0];
+          // Serial.print("dir:");Serial.print(dir);
+          // Serial.print("<--");
+          // Serial.print("Heading:");Serial.println(heading);
+        }
+      }
+      
+      // after this, should heading to the target point
+      MoveForward(mod*20);
+      //Serial.print("Moving forward:");Serial.println(mod*10);
+      
+      // Serial.print("\tdelta X:");Serial.print(deltax);
+      // Serial.print("\tdelta Y:");Serial.print(deltay);
+      // Serial.print("\tX_:");Serial.print(x_);
+      // Serial.print("\tY_:");Serial.print(y_);      
+
+      // float deltax = xs[i]-xs[0];
+      // float deltay = ys[i]-ys[0];
+      // if (deltay == 0) {
+      //   theta = 90;
+      //   if (deltax<0) {
+      //     theta = -90;
+      //   }
+      // } else {
+      //   theta = atan(deltax/deltay)*180/M_PI;
+      // }
+      // Serial.print("deltax:");Serial.print(deltax);
+      // Serial.print("\tdeltay:");Serial.print(deltay);
+      // deltax = xs[i]-xs[i-1];
+      // deltay = ys[i]-ys[i-1];
+      // Serial.print("\tmod:");Serial.print(mod);
+      // Serial.print("\ttheta:");Serial.println(theta);
+      
+      // while(1) {
+      //   float ypr[3];
+      //   VectorInt16 ds;
+      //   if (readMPU6050(&v, ypr,&ds)) {
+      //     s.x += ds.x;
+      //     s.y += ds.y;
+      //     if (ds.x!=0 || ds.y != 0) {
+      //       Serial.print("\tV:");Serial.print(v.x);
+      //       Serial.print("\t");Serial.print(v.y);
+      //       //Serial.print("\tYaw:");Serial.print(ypr[0]);
+      //       Serial.print("\tdSx:");Serial.print(ds.x);
+      //       Serial.print("\tdSy:"); Serial.print(ds.y);
+      //       Serial.print("\tSx:"); Serial.print(s.x);
+      //       Serial.print("\tSy:"); Serial.print(s.y);
+      //       Serial.println();
+      //     }
+      //   }
+      // }
+      // while (s.x < xs[i] && s.y < ys[i]) {
+      //   float[3] ypr;
+      //   VectorInt16 ds;
+      //   readMPU6050(&v,ypr,&ds);
+      //   s.x += ds.x;
+      //   s.y += ds.y;
+      //   if (ypr[0] > )  
+
+      // }
+    }
+  }
+}
+
+// Read MPU6050 sensor
+// Currently only read the yaw in degree ( I cannot let the displacement work)
+// potentially it can return volocity and displacement
+bool readMPU6050(float *ypr) {
+  // static unsigned long lastTime;
+  // static int zerocount;
+  
+  uint8_t fifoBuffer[64]; // FIFO storage buffer
+  Quaternion q;           // [w, x, y, z]         quaternion container
+  VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+  VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+  VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+  VectorFloat gravity;    // [x, y, z]            gravity vector
+  
+  if (!dmpReady) return false;
+  if (!mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) return false;
+  mpu.dmpGetQuaternion(&q, fifoBuffer);
+  mpu.dmpGetGravity(&gravity, &q);
+  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+  // mpu.dmpGetAccel(&aa, fifoBuffer);
+  // mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+  // mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
+
+  // unsigned long currTime = millis();
+  // unsigned long dtime = currTime - lastTime;
+  // lastTime = currTime;
+
+  ypr[0] = ypr[0]*180/M_PI;
+  ypr[1] = ypr[1]*180/M_PI;
+  ypr[2] = ypr[2]*180/M_PI;
+
+  // VectorInt16 a;
+  // a.x = aaWorld.x/128; // remove noise
+  // a.y = aaWorld.y/128;
+  // a.z = aaWorld.z/128;
+
+  // // Serial.print("areal\t");
+  // // Serial.print(aaReal.x);
+  // // Serial.print("\t");
+  // // Serial.print(aaReal.y);
+  // // Serial.print("\t");
+  // // Serial.print(aaReal.z);
+  // // Serial.print("\ta:");Serial.print(a.x);Serial.print(a.y);
+  // // Serial.print("\tyaw:");Serial.print(ypr[0]);
+  // // Serial.println();
+  
+  // if (a.x == 0 && a.y == 0) {
+  //     zerocount++;
+  // // if we see 10 times a == 0, 
+  // // force speed to 0
+  //     if (zerocount > 10) {
+  //     ds->x += v->x*dtime;
+  //     ds->y += v->y*dtime;
+  //     v->x = 0;
+  //     v->y = 0;
+  //     zerocount = 0;
+  //     }
+  // } else {
+  //     ds->x += (v->x*dtime + a.x*dtime*dtime/2);
+  //     v->x += a.x*dtime;
+  //     ds->y += v->y*dtime + a.y*dtime*dtime/2;
+  //     v->y += a.y*dtime;
+  //     zerocount = 0;
+  // }
+  return true;
+}
+
+#endif
 #endif
